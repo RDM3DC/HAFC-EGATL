@@ -35,7 +35,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 # Put workspace root on path so ``from solver.egatl import ...`` works
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from solver.egatl import (
     EGATLParams,
@@ -330,7 +330,7 @@ def run_lattice(args):
           f"GMRES fails = {summ['gmres_fails']}")
 
     # --- plaquette snapshots ---
-    dmg_step = int(args.damage_time / args.dt)
+    dmg_step = min(K - 1, int(args.damage_time / args.dt))
     late_step = min(K - 1, dmg_step + int(6.0 / args.dt))
     plaq_pre = plaquette_signatures(
         out["g"][max(0, dmg_step - 1)], lattice,
