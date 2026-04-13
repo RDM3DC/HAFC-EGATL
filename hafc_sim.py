@@ -319,11 +319,11 @@ def run_lattice(args):
 
     print("\n  Topological readout")
     print(f"    Chern proxy       : {summ['chern_pre']:10.4f} -> {summ['chern_post']:10.4f}   Δ={summ['chern_delta']:+.4f}")
-    print(f"    QWZ bulk Chern    : {summ['qzw_chern_pre']:10.4f} -> {summ['qzw_chern_post']:10.4f}   Δ={summ['qzw_chern_delta']:+.4f}")
+    print(f"    QWZ bulk Chern    : {summ['qwz_chern_pre']:10.4f} -> {summ['qwz_chern_post']:10.4f}   Δ={summ['qwz_chern_delta']:+.4f}")
     print(f"    QWZ Bott          : {summ['bott_pre']:10.4f} -> {summ['bott_post']:10.4f}   Δ={summ['bott_delta']:+.4f}")
     print(f"    Bott int. error   : {summ['bott_integer_error_pre']:10.4f} -> {summ['bott_integer_error_post']:10.4f}")
-    print(f"    QWZ u_eff         : {summ['qzw_u_eff_pre']:10.4f} -> {summ['qzw_u_eff_post']:10.4f}")
-    print(f"    QWZ gap           : {summ['qzw_gap_pre']:10.4f} -> {summ['qzw_gap_post']:10.4f}")
+    print(f"    QWZ u_eff         : {summ['qwz_u_eff_pre']:10.4f} -> {summ['qwz_u_eff_post']:10.4f}")
+    print(f"    QWZ gap           : {summ['qwz_gap_pre']:10.4f} -> {summ['qwz_gap_post']:10.4f}")
 
     print(f"\n  Final S = {summ['final_S']:.4f}   "
           f"Final pi_a = {summ['final_pi_a']:.4f}   "
@@ -530,7 +530,7 @@ def main() -> None:
                 print(f"\n  --- {name} ---")
                 for key in ["transfer_recovery", "sig_boundary_recovery",
                              "sig_top_edge_recovery", "sig_plaquette_recovery",
-                             "qzw_chern_post", "bott_post", "qzw_gap_post", "bott_integer_error_post"]:
+                             "qwz_chern_post", "bott_post", "qwz_gap_post", "bott_integer_error_post"]:
                     v = summ.get(key, None)
                     print(f"    {key}: {v:.4f}" if isinstance(v, float) else f"    {key}: N/A")
 

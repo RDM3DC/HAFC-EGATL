@@ -398,10 +398,10 @@ with tab_dyn:
             ("Sig top-edge", summ["sig_top_edge_pre"], summ["sig_top_edge_post"], summ["sig_top_edge_recovery"]),
             ("Sig plaquette", summ["sig_plaquette_pre"], summ["sig_plaquette_post"], summ["sig_plaquette_recovery"]),
             ("Chern proxy", summ["chern_pre"], summ["chern_post"], None),
-            ("QWZ Chern", summ["qzw_chern_pre"], summ["qzw_chern_post"], None),
+            ("QWZ Chern", summ["qwz_chern_pre"], summ["qwz_chern_post"], None),
             ("Bott index", summ["bott_pre"], summ["bott_post"], None),
-            ("Spectral gap", summ["qzw_gap_pre"], summ["qzw_gap_post"], None),
-            ("u_eff", summ["qzw_u_eff_pre"], summ["qzw_u_eff_post"], None),
+            ("Spectral gap", summ["qwz_gap_pre"], summ["qwz_gap_post"], None),
+            ("u_eff", summ["qwz_u_eff_pre"], summ["qwz_u_eff_post"], None),
             ("Entropy S", None, summ["final_S"], None),
             ("π_a / π", None, summ["final_pi_a"] / math.pi, None),
         ]
@@ -423,9 +423,9 @@ with tab_topo:
 | Invariant | Pre-damage | Post-settle | Δ |
 |-----------|-----------|------------|---|
 | **Bott index** | {summ['bott_pre']:.3f} | {summ['bott_post']:.3f} | {summ['bott_delta']:+.3f} |
-| **QWZ Chern** | {summ['qzw_chern_pre']:.3f} | {summ['qzw_chern_post']:.3f} | {summ['qzw_chern_delta']:+.3f} |
+| **QWZ Chern** | {summ['qwz_chern_pre']:.3f} | {summ['qwz_chern_post']:.3f} | {summ['qwz_chern_delta']:+.3f} |
 | **Chern proxy** | {summ['chern_pre']:.3f} | {summ['chern_post']:.3f} | {summ['chern_delta']:+.3f} |
-| **Spectral gap** | {summ['qzw_gap_pre']:.4f} | {summ['qzw_gap_post']:.4f} | — |
+| **Spectral gap** | {summ['qwz_gap_pre']:.4f} | {summ['qwz_gap_post']:.4f} | — |
 | **Bott int. error** | {summ['bott_integer_error_pre']:.4f} | {summ['bott_integer_error_post']:.4f} | — |
         """)
 
