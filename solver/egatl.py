@@ -672,6 +672,9 @@ def summarize_recovery(
     out: Dict[str, Any],
     lattice: "QWZLattice",
     damage_time: float,
+    mass0: float = -1.0,
+    pi_gain: float = 0.45,
+    entropy_gain: float = 0.10,
 ) -> Dict[str, float]:
     """Summarise pre/post recovery metrics."""
     t = out["t"]
@@ -708,10 +711,15 @@ def summarize_recovery(
     pi_s = out["pi_a"][::stride]
     S_s = out["S"][::stride]
     t_s = t[::stride]
-    # Placeholder u_eff using default params for summary
-    from solver.egatl import EGATLParams as _EGP  # noqa: F401 (self-ref ok)
-    qwz_s = qwz_topology_series(g_s, lattice, pi_s, S_s, mass0=-1.0,
-                                 pi_gain=0.45, entropy_gain=0.10)
+    qwz_s = qwz_topology_series(
+        g_s,
+        lattice,
+        pi_s,
+        S_s,
+        mass0=mass0,
+        pi_gain=pi_gain,
+        entropy_gain=entropy_gain,
+    )
 
     def pm(arr: np.ndarray) -> float:
         return _window_mean(arr, t, pre_lo, pre_hi)
@@ -851,7 +859,14 @@ def compare_ablations(
             damage_factor=1e-4,
             eg=eg, ent=ent, ruler=ruler,
         )
-        summ = summarize_recovery(out, lat, damage_time)
+        summ = summarize_recovery(
+            out,
+            lat,
+            damage_time,
+            mass0=mass,
+            pi_gain=qzw_pi_gain,
+            entropy_gain=qzw_entropy_gain,
+        )
         results[name] = (lat, out, summ)
 
     return results

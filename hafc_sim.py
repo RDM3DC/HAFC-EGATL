@@ -294,7 +294,14 @@ def run_lattice(args):
     Ueff = QWZ["u_eff"]
 
     # --- summary report ---
-    summ = summarize_recovery(out, lattice, args.damage_time)
+    summ = summarize_recovery(
+        out,
+        lattice,
+        args.damage_time,
+        mass0=args.mass,
+        pi_gain=args.qzw_pi_gain,
+        entropy_gain=args.qzw_entropy_gain,
+    )
 
     print(f"\n[HAFC v2] {K} steps, {lattice.n_bonds} bonds, "
           f"{len(lattice.plaquettes)} plaquettes")

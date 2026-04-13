@@ -50,47 +50,112 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+DEFAULT_PRESET: Dict[str, Any] = {
+    "nx": 6,
+    "ny": 6,
+    "T": 30.0,
+    "dt": 0.1,
+    "seed": 0,
+    "apply_damage": True,
+    "damage_time": 12.0,
+    "mass": -1.0,
+    "alpha0": 2.5,
+    "qzw_pi_gain": 0.45,
+    "qzw_entropy_gain": 0.10,
+    "init_phase_noise": 0.02,
+    "S_init": 1.5,
+    "gamma": 0.20,
+    "alpha_pi": 0.15,
+}
+
+BALANCED_RECOVERY_PRESET: Dict[str, Any] = {
+    **DEFAULT_PRESET,
+    "mass": -2.5,
+    "alpha0": 4.0,
+    "qzw_entropy_gain": 0.0,
+    "alpha_pi": 0.08,
+}
+
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "Default": DEFAULT_PRESET,
+    "Balanced Recovery": BALANCED_RECOVERY_PRESET,
+}
+
+PRESET_DESCRIPTIONS: Dict[str, str] = {
+    "Default": "Reference configuration from the original UI.",
+    "Balanced Recovery": "Robust 20-seed setting with near-unity transfer recovery and zero Bott drift.",
+}
+
+
+def _ensure_control_state() -> None:
+    if "controls_initialized" not in st.session_state:
+        for key, value in DEFAULT_PRESET.items():
+            st.session_state[key] = value
+        st.session_state["preset_name"] = "Default"
+        st.session_state["controls_initialized"] = True
+    else:
+        for key, value in DEFAULT_PRESET.items():
+            st.session_state.setdefault(key, value)
+    st.session_state.setdefault("preset_name", "Default")
+
+
+def _apply_preset(preset_name: str) -> None:
+    for key, value in PRESETS[preset_name].items():
+        st.session_state[key] = value
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sidebar — simulation parameters
 # ─────────────────────────────────────────────────────────────────────────────
+
+_ensure_control_state()
 
 with st.sidebar:
     st.title("⚙️ HAFC-EGATL Controls")
     st.caption("Hybrid Adaptive Field Computer  |  Entropy-Gated Topological Lattice")
 
+    preset_name = st.selectbox("Preset", list(PRESETS), key="preset_name")
+    st.caption(PRESET_DESCRIPTIONS[preset_name])
+    if st.button("Apply preset", width="stretch"):
+        _apply_preset(preset_name)
+        st.rerun()
+
     st.subheader("Lattice & Time")
-    nx = st.slider("Lattice width (nx)", 3, 10, 6)
-    ny = st.slider("Lattice height (ny)", 3, 10, 6)
-    T = st.slider("Simulation time T", 5.0, 60.0, 30.0, step=1.0)
-    dt = st.select_slider("Time step dt", options=[0.02, 0.05, 0.1, 0.2], value=0.1)
-    seed = st.number_input("Random seed", 0, 9999, 0, step=1)
+    nx = st.slider("Lattice width (nx)", 3, 10, key="nx")
+    ny = st.slider("Lattice height (ny)", 3, 10, key="ny")
+    T = st.slider("Simulation time T", 5.0, 60.0, key="T", step=1.0)
+    dt = st.select_slider("Time step dt", options=[0.02, 0.05, 0.1, 0.2], key="dt")
+    seed = st.number_input("Random seed", 0, 9999, key="seed", step=1)
 
     st.subheader("Damage & Recovery")
-    apply_damage = st.checkbox("Apply damage event", value=True)
+    max_damage_time = max(0.5, float(T) - 0.5)
+    if st.session_state["damage_time"] > max_damage_time:
+        st.session_state["damage_time"] = max_damage_time
+
+    apply_damage = st.checkbox("Apply damage event", key="apply_damage")
     damage_time = st.slider(
         "Damage time t_d",
         0.5,
-        float(T) - 0.5,
-        min(12.0, float(T) * 0.4),
+        max_damage_time,
         step=0.5,
         disabled=not apply_damage,
+        key="damage_time",
     )
     if not apply_damage:
         damage_time = T + dt  # effectively never
 
     st.subheader("Physics Parameters")
-    mass = st.slider("QWZ mass M", -3.0, 1.0, -1.0, step=0.1)
-    alpha0 = st.slider("ARP gain α₀", 0.5, 6.0, 2.5, step=0.1)
-    qzw_pi_gain = st.slider("QWZ π gain", 0.0, 1.0, 0.45, step=0.05)
-    qzw_entropy_gain = st.slider("QWZ entropy gain", 0.0, 0.5, 0.10, step=0.01)
-    init_phase_noise = st.slider("Init phase noise", 0.0, 0.2, 0.02, step=0.005)
+    mass = st.slider("QWZ mass M", -3.0, 1.0, key="mass", step=0.1)
+    alpha0 = st.slider("ARP gain α₀", 0.5, 6.0, key="alpha0", step=0.1)
+    qzw_pi_gain = st.slider("QWZ π gain", 0.0, 1.0, key="qzw_pi_gain", step=0.05)
+    qzw_entropy_gain = st.slider("QWZ entropy gain", 0.0, 0.5, key="qzw_entropy_gain", step=0.01)
+    init_phase_noise = st.slider("Init phase noise", 0.0, 0.2, key="init_phase_noise", step=0.005)
 
     st.subheader("Entropy & Ruler")
-    S_init = st.slider("Initial entropy S₀", 0.5, 4.0, 1.5, step=0.1)
-    gamma = st.slider("Entropy relaxation γ", 0.01, 1.0, 0.20, step=0.01)
-    alpha_pi = st.slider("Ruler drive α_π", 0.01, 0.5, 0.15, step=0.01)
+    S_init = st.slider("Initial entropy S₀", 0.5, 4.0, key="S_init", step=0.1)
+    gamma = st.slider("Entropy relaxation γ", 0.01, 1.0, key="gamma", step=0.01)
+    alpha_pi = st.slider("Ruler drive α_π", 0.01, 0.5, key="alpha_pi", step=0.01)
 
-    run_btn = st.button("▶ Run Simulation", type="primary", use_container_width=True)
+    run_btn = st.button("▶ Run Simulation", type="primary", width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Header
@@ -258,7 +323,6 @@ def _plot_topology(t, topo_data, damage_time, has_damage):
 def _plot_lattice(lattice, g_snapshot, title: str = "Conductance network"):
     """Draw lattice with bond widths ∝ |g_re| and colour ∝ |g_im|."""
     import matplotlib.pyplot as plt
-    import matplotlib.cm as cm
     import matplotlib.colors as mcolors
 
     g_re = np.abs(np.real(g_snapshot))
@@ -268,7 +332,7 @@ def _plot_lattice(lattice, g_snapshot, title: str = "Conductance network"):
 
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.set_title(title, fontsize=10)
-    cmap = cm.get_cmap("plasma")
+    cmap = plt.get_cmap("plasma")
 
     for e, (i, j) in enumerate(lattice.bonds):
         xi, yi = lattice.node_x[i], lattice.node_y[i]
@@ -334,21 +398,27 @@ if run_btn:
                f"{len(lattice.plaquettes)} plaquettes")
     st.session_state["lattice"] = lattice
     st.session_state["out"] = out
-    st.session_state["damage_time"] = damage_time
-    st.session_state["has_damage"] = apply_damage
-    st.session_state["mass"] = mass
-    st.session_state["qzw_pi_gain"] = qzw_pi_gain
-    st.session_state["qzw_entropy_gain"] = qzw_entropy_gain
+    st.session_state["run_params"] = {
+        "damage_time": damage_time,
+        "has_damage": apply_damage,
+        "mass": mass,
+        "qzw_pi_gain": qzw_pi_gain,
+        "qzw_entropy_gain": qzw_entropy_gain,
+    }
 
-if "out" not in st.session_state:
+if "out" not in st.session_state or "run_params" not in st.session_state:
     st.info("👈 Configure parameters and click **▶ Run Simulation** to get started.")
     st.stop()
 
 # ── Retrieve session data ────────────────────────────────────────────────────
 lattice: QWZLattice = st.session_state["lattice"]
 out: Dict[str, Any] = st.session_state["out"]
-damage_time_sess: float = st.session_state["damage_time"]
-has_damage: bool = st.session_state["has_damage"]
+run_params: Dict[str, Any] = st.session_state["run_params"]
+damage_time_sess: float = float(run_params["damage_time"])
+has_damage: bool = bool(run_params["has_damage"])
+run_mass: float = float(run_params["mass"])
+run_qzw_pi_gain: float = float(run_params["qzw_pi_gain"])
+run_qzw_entropy_gain: float = float(run_params["qzw_entropy_gain"])
 t = out["t"]
 K = len(t)
 
@@ -359,14 +429,21 @@ with st.spinner("Computing topological invariants…"):
         nx=lattice.nx, ny=lattice.ny,
         pi_a_bytes=out["pi_a"].tobytes(),
         S_bytes=out["S"].tobytes(),
-        mass=st.session_state["mass"],
-        qzw_pi_gain=st.session_state["qzw_pi_gain"],
-        qzw_entropy_gain=st.session_state["qzw_entropy_gain"],
+        mass=run_mass,
+        qzw_pi_gain=run_qzw_pi_gain,
+        qzw_entropy_gain=run_qzw_entropy_gain,
         n_bonds=lattice.n_bonds, K=K,
     )
 
 # ── Summary metrics row ──────────────────────────────────────────────────────
-summ = summarize_recovery(out, lattice, damage_time_sess)
+summ = summarize_recovery(
+    out,
+    lattice,
+    damage_time_sess,
+    mass0=run_mass,
+    pi_gain=run_qzw_pi_gain,
+    entropy_gain=run_qzw_entropy_gain,
+)
 
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Y_eff recovery", f"{summ['transfer_recovery']:.3f}",
@@ -386,7 +463,7 @@ tab_dyn, tab_topo, tab_net, tab_plaq, tab_data = st.tabs([
 with tab_dyn:
     st.subheader("System Dynamics")
     fig_dyn = _plot_dynamics(t, out, lattice, damage_time_sess, has_damage)
-    st.pyplot(fig_dyn, use_container_width=True)
+    st.pyplot(fig_dyn, width="stretch")
 
     with st.expander("Pre / Post comparison table"):
         import pandas as pd
@@ -411,12 +488,12 @@ with tab_dyn:
              for r, v, w, x in rows],
             columns=["Metric", "Pre", "Post", "Recovery"],
         )
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
 with tab_topo:
     st.subheader("Topological Readout")
     fig_topo = _plot_topology(t, topo_data, damage_time_sess, has_damage)
-    st.pyplot(fig_topo, use_container_width=True)
+    st.pyplot(fig_topo, width="stretch")
 
     with st.expander("Topological summary"):
         st.markdown(f"""
@@ -441,7 +518,7 @@ with tab_net:
         if has_damage and abs(t[k] - damage_time_sess) < 2 * (t[-1] / len(t)):
             label += " ⚡"
         fig_n = _plot_lattice(lattice, out["g"][k], title=label)
-        snap_cols[ci].pyplot(fig_n, use_container_width=True)
+        snap_cols[ci].pyplot(fig_n, width="stretch")
 
     st.caption(
         "Bond width ∝ |g_re| (real conductance).  "
@@ -458,7 +535,7 @@ with tab_net:
     with c1:
         fig_sel = _plot_lattice(lattice, out["g"][k_sel],
                                 title=f"Network at t = {t[k_sel]:.2f}")
-        st.pyplot(fig_sel, use_container_width=True)
+        st.pyplot(fig_sel, width="stretch")
     with c2:
         g_snap = out["g"][k_sel]
         st.markdown(f"**t = {t[k_sel]:.2f}**")
@@ -478,16 +555,16 @@ with tab_plaq:
     with cp1:
         fig_p = _plot_plaquettes(lattice, out["g"][pre_k], out["pi_a"][pre_k],
                                   f"Pre-damage (t={t[pre_k]:.1f})")
-        st.pyplot(fig_p, use_container_width=True)
+        st.pyplot(fig_p, width="stretch")
     with cp2:
         fig_p = _plot_plaquettes(lattice, out["g"][min(K - 1, dmg_k + 2)],
                                   out["pi_a"][min(K - 1, dmg_k + 2)],
                                   f"Just after damage (t={t[min(K-1, dmg_k+2)]:.1f})")
-        st.pyplot(fig_p, use_container_width=True)
+        st.pyplot(fig_p, width="stretch")
     with cp3:
         fig_p = _plot_plaquettes(lattice, out["g"][post_k], out["pi_a"][post_k],
                                   f"Post-settle (t={t[post_k]:.1f})")
-        st.pyplot(fig_p, use_container_width=True)
+        st.pyplot(fig_p, width="stretch")
 
     st.caption(
         "Each cell is a plaquette of 4 bonds. Brightness = π_f loop signature "
@@ -510,7 +587,7 @@ with tab_data:
         "sig_bnd": topo_data["sig_bnd"][::stride_d],
         "sig_top": topo_data["sig_top"][::stride_d],
     })
-    st.dataframe(df_raw.round(6), use_container_width=True, hide_index=True)
+    st.dataframe(df_raw.round(6), width="stretch", hide_index=True)
 
     csv_bytes = df_raw.to_csv(index=False).encode("utf-8")
     st.download_button(
