@@ -327,6 +327,68 @@ def _egatl_step(
 #  Recovery protocol                                            #
 # ============================================================ #
 
+def _damage_mask(
+    lattice: "QWZLattice",
+    damage_scenario: str,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Return a boolean mask for the selected damage scenario."""
+    scenario = damage_scenario or "central_strip"
+    mask = np.zeros(lattice.n_bonds, dtype=bool)
+
+    center_x = 0.5 * float(lattice.nx - 1)
+    center_y = 0.5 * float(lattice.ny - 1)
+
+    for edge_index, (node_i, node_j) in enumerate(lattice.bonds):
+        xi, yi = float(lattice.node_x[node_i]), float(lattice.node_y[node_i])
+        xj, yj = float(lattice.node_x[node_j]), float(lattice.node_y[node_j])
+        x_mid = 0.5 * (xi + xj)
+        y_mid = 0.5 * (yi + yj)
+
+        if scenario == "central_strip":
+            if abs(x_mid - center_x) <= 0.75:
+                mask[edge_index] = True
+        elif scenario == "center_cross":
+            if abs(x_mid - center_x) <= 0.75 or abs(y_mid - center_y) <= 0.75:
+                mask[edge_index] = True
+        elif scenario == "center_block":
+            if abs(x_mid - center_x) <= 1.0 and abs(y_mid - center_y) <= 1.0:
+                mask[edge_index] = True
+        elif scenario == "top_edge":
+            if yi == lattice.ny - 1 or yj == lattice.ny - 1:
+                mask[edge_index] = True
+        elif scenario == "source_corner":
+            if max(xi, xj) <= 1.0 and max(yi, yj) <= 1.0:
+                mask[edge_index] = True
+        elif scenario == "random_bonds":
+            continue
+        else:
+            raise ValueError(f"Unknown damage scenario: {damage_scenario}")
+
+    if scenario == "random_bonds":
+        n_drop = max(1, int(round(0.30 * lattice.n_bonds)))
+        dropped = rng.choice(lattice.n_bonds, size=n_drop, replace=False)
+        mask[dropped] = True
+
+    if not np.any(mask):
+        mask[:] = True
+
+    return mask
+
+
+def _apply_damage_event(
+    g: np.ndarray,
+    lattice: "QWZLattice",
+    damage_scenario: str,
+    damage_factor: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Apply the selected damage scenario by scaling targeted bonds."""
+    damaged = np.array(g, copy=True)
+    mask = _damage_mask(lattice, damage_scenario, rng)
+    damaged[mask] *= damage_factor
+    return damaged
+
 def run_recovery_protocol(
     nx: int,
     ny: int,
@@ -336,6 +398,7 @@ def run_recovery_protocol(
     damage_time: float,
     mass: float,
     damage_factor: float,
+    damage_scenario: str,
     eg: EGATLParams,
     ent: EntropyParams,
     ruler: RulerParams,
@@ -374,13 +437,13 @@ def run_recovery_protocol(
     for k in range(K):
         # Apply damage
         if not damage_applied and k >= damage_step:
-            # Damage: kill bonds in the central strip of the lattice
-            cx, cy = nx // 2, ny // 2
-            for e, (i, j) in enumerate(lattice.bonds):
-                xi, yi = int(lattice.node_x[i]), int(lattice.node_y[i])
-                xj, yj = int(lattice.node_x[j]), int(lattice.node_y[j])
-                if abs(xi - cx) <= 1 and abs(xj - cx) <= 1:
-                    g[e] *= damage_factor
+            g = _apply_damage_event(
+                g,
+                lattice,
+                damage_scenario=damage_scenario,
+                damage_factor=damage_factor,
+                rng=rng,
+            )
             damage_applied = True
 
         phi, I_bond, I_norm, gf = _solve_network(g, lattice)
@@ -814,6 +877,7 @@ def compare_ablations(
     init_phase_noise: float,
     qzw_pi_gain: float,
     qzw_entropy_gain: float,
+    damage_scenario: str = "central_strip",
 ) -> Dict[str, Tuple[Any, Dict[str, Any], Dict[str, float]]]:
     """Run three ablation variants and return results dict.
 
@@ -857,6 +921,7 @@ def compare_ablations(
             nx=nx, ny=ny, T=T, dt=dt, seed=seed,
             damage_time=damage_time, mass=mass,
             damage_factor=1e-4,
+            damage_scenario=damage_scenario,
             eg=eg, ent=ent, ruler=ruler,
         )
         summ = summarize_recovery(

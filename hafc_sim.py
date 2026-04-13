@@ -252,12 +252,14 @@ def run_lattice(args):
                         pi_min=0.5, pi_max=12.0)
 
     print(f"[HAFC v2] EGATL lattice {args.nx}x{args.ny}, "
-          f"T={args.T}, damage at t={args.damage_time}")
+            f"T={args.T}, damage at t={args.damage_time}, "
+            f"scenario={args.damage_scenario}")
 
     lattice, out = run_recovery_protocol(
         nx=args.nx, ny=args.ny, T=args.T, dt=args.dt,
         seed=args.seed, damage_time=args.damage_time,
         mass=args.mass, damage_factor=1e-4,
+        damage_scenario=args.damage_scenario,
         eg=eg, ent=ent, ruler=ruler,
     )
 
@@ -509,6 +511,11 @@ def main() -> None:
     ap.add_argument("--T", type=float, default=30.0)
     ap.add_argument("--dt", type=float, default=0.1)
     ap.add_argument("--damage-time", type=float, default=12.0)
+    ap.add_argument(
+        "--damage-scenario",
+        choices=["central_strip", "center_cross", "center_block", "top_edge", "source_corner", "random_bonds"],
+        default="central_strip",
+    )
     ap.add_argument("--mass", type=float, default=-1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--init-phase-noise", type=float, default=0.02)
@@ -532,6 +539,7 @@ def main() -> None:
                 init_phase_noise=args.init_phase_noise,
                 qzw_pi_gain=args.qzw_pi_gain,
                 qzw_entropy_gain=args.qzw_entropy_gain,
+                damage_scenario=args.damage_scenario,
             )
             for name, (_, _, summ) in results.items():
                 print(f"\n  --- {name} ---")

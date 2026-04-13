@@ -156,6 +156,7 @@ def _run_case(
         damage_time=damage_time,
         mass=mass,
         damage_factor=1e-4,
+        damage_scenario="central_strip",
         eg=eg,
         ent=ent,
         ruler=ruler,
