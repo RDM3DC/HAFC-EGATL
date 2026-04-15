@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import gmres as sp_gmres
+from scipy.sparse import csr_matrix, diags
+from scipy.sparse.linalg import LinearOperator, gmres as sp_gmres, spilu, spsolve
 
 # ============================================================ #
 #  Parameter dataclasses                                        #
@@ -81,6 +81,9 @@ class QWZLattice:
     top_edge_bond_mask: np.ndarray      # bool shape (n_bonds,)
     node_x: np.ndarray                  # x coord of each node
     node_y: np.ndarray                  # y coord of each node
+    bond_src: np.ndarray                # source node index for each bond
+    bond_dst: np.ndarray                # destination node index for each bond
+    incidence: csr_matrix               # node-edge incidence matrix, shape (n_nodes, n_bonds)
 
 
 def build_qwz_lattice(nx: int, ny: int, mass: float = -1.0) -> "QWZLattice":
@@ -154,6 +157,19 @@ def build_qwz_lattice(nx: int, ny: int, mass: float = -1.0) -> "QWZLattice":
 
     node_x = np.array([idx % nx for idx in range(n_nodes)], dtype=float)
     node_y = np.array([idx // nx for idx in range(n_nodes)], dtype=float)
+    bond_src = np.array([i for i, _ in bonds], dtype=int)
+    bond_dst = np.array([j for _, j in bonds], dtype=int)
+
+    incidence_rows = np.concatenate([bond_src, bond_dst])
+    incidence_cols = np.concatenate([np.arange(n_bonds), np.arange(n_bonds)])
+    incidence_data = np.concatenate([
+        np.ones(n_bonds, dtype=complex),
+        -np.ones(n_bonds, dtype=complex),
+    ])
+    incidence = csr_matrix(
+        (incidence_data, (incidence_rows, incidence_cols)),
+        shape=(n_nodes, n_bonds),
+    )
 
     return QWZLattice(
         nx=nx, ny=ny, n_nodes=n_nodes, n_bonds=n_bonds,
@@ -163,6 +179,8 @@ def build_qwz_lattice(nx: int, ny: int, mass: float = -1.0) -> "QWZLattice":
         boundary_bond_mask=boundary_bond_mask,
         top_edge_bond_mask=top_edge_bond_mask,
         node_x=node_x, node_y=node_y,
+        bond_src=bond_src, bond_dst=bond_dst,
+        incidence=incidence,
     )
 
 
@@ -185,31 +203,103 @@ def _mu_eff(S: float, eg: EGATLParams) -> float:
     return eg.mu0 * (S / eg.S0)
 
 
+def _project_real_budget(values: np.ndarray, eg: EGATLParams) -> np.ndarray:
+    """Project real conductances onto box constraints plus total budget."""
+    clipped = np.clip(values, eg.g_min, eg.g_max)
+    if eg.budget_re <= 0 or float(clipped.sum()) <= eg.budget_re:
+        return clipped
+
+    min_feasible = eg.g_min * clipped.size
+    if eg.budget_re <= min_feasible:
+        return np.full_like(clipped, eg.g_min)
+
+    lo = float(np.min(values - eg.g_max))
+    hi = float(np.max(values - eg.g_min))
+    projected = clipped
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        projected = np.clip(values - mid, eg.g_min, eg.g_max)
+        if float(projected.sum()) > eg.budget_re:
+            lo = mid
+        else:
+            hi = mid
+    return np.clip(values - hi, eg.g_min, eg.g_max)
+
+
 # ============================================================ #
 #  Network solver                                               #
 # ============================================================ #
 
 def _build_laplacian(g: np.ndarray, lattice: QWZLattice) -> np.ndarray:
-    N = lattice.n_nodes
-    L = np.zeros((N, N), dtype=complex)
-    for e, (i, j) in enumerate(lattice.bonds):
-        L[i, i] += g[e]
-        L[j, j] += g[e]
-        L[i, j] -= g[e]
-        L[j, i] -= g[e]
-    return L
+    g_diag = diags(g, offsets=0, shape=(lattice.n_bonds, lattice.n_bonds), format="csr")
+    return (lattice.incidence @ g_diag @ lattice.incidence.conjugate().transpose()).tocsr()
+
+
+def _make_preconditioner(matrix: csr_matrix) -> Optional[LinearOperator]:
+    try:
+        ilu = spilu(matrix.tocsc(), drop_tol=1e-4, fill_factor=10.0)
+        return LinearOperator(matrix.shape, matvec=ilu.solve, dtype=matrix.dtype)
+    except Exception:
+        return None
+
+
+def _grounded_solve(
+    matrix: csr_matrix,
+    rhs: np.ndarray,
+    x0: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, int]:
+    """Solve the grounded sparse system with direct solve first, then GMRES fallback."""
+    dim = matrix.shape[0]
+    if dim <= 128:
+        try:
+            phi_red = np.asarray(spsolve(matrix, rhs), dtype=complex)
+            if np.all(np.isfinite(phi_red)):
+                return phi_red, 0
+        except Exception:
+            pass
+
+    gmres_failed = 0
+    preconditioner = _make_preconditioner(matrix)
+    try:
+        phi_red, info = sp_gmres(
+            matrix,
+            rhs,
+            x0=x0,
+            M=preconditioner,
+            rtol=1e-8,
+            atol=1e-10,
+            restart=min(80, max(20, dim)),
+            maxiter=1000,
+        )
+        phi_red = np.asarray(phi_red, dtype=complex)
+        if info == 0 and np.all(np.isfinite(phi_red)):
+            return phi_red, 0
+        gmres_failed = 1
+    except Exception:
+        gmres_failed = 1
+
+    try:
+        phi_red = np.asarray(spsolve(matrix, rhs), dtype=complex)
+        if np.all(np.isfinite(phi_red)):
+            return phi_red, gmres_failed
+    except Exception:
+        pass
+
+    return np.zeros(dim, dtype=complex), 1
 
 
 def _solve_network(
     g: np.ndarray,
     lattice: QWZLattice,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    prev_phi: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """Solve complex admittance network.
 
     Returns
     -------
     phi     : (n_nodes,) complex voltage array
     I_bond  : (n_bonds,) complex current array
+    I_abs   : (n_bonds,) real array, raw current magnitude
     I_norm  : (n_bonds,) real array, |I| normalised to [0,1]
     gmres_fail : 0 or 1
     """
@@ -224,50 +314,27 @@ def _solve_network(
     b[sink] -= 1.0
 
     # Ground at sink: remove sink row/col
-    keep = [i for i in range(N) if i != sink]
-    L_red = L[np.ix_(keep, keep)]
+    keep = np.flatnonzero(np.arange(N) != sink)
+    L_red = L[keep][:, keep].tocsr()
     b_red = b[keep]
+    x0_red = None
+    if prev_phi is not None and prev_phi.shape == (N,):
+        x0_red = np.asarray(prev_phi[keep], dtype=complex)
 
-    gmres_fail = 0
-    phi_red: np.ndarray
-
-    if N <= 64:
-        # Direct solve for small lattices
-        try:
-            phi_red = np.linalg.solve(L_red, b_red)
-        except np.linalg.LinAlgError:
-            phi_red = np.zeros(len(keep), dtype=complex)
-            gmres_fail = 1
-    else:
-        try:
-            phi_red, info = sp_gmres(
-                csr_matrix(L_red), b_red, rtol=1e-8, maxiter=1000, atol=1e-10
-            )
-            if info != 0:
-                gmres_fail = 1
-                phi_red = np.linalg.solve(L_red, b_red)
-        except Exception:
-            gmres_fail = 1
-            try:
-                phi_red = np.linalg.solve(L_red, b_red)
-            except Exception:
-                phi_red = np.zeros(len(keep), dtype=complex)
+    phi_red, gmres_fail = _grounded_solve(L_red, b_red, x0=x0_red)
 
     phi = np.zeros(N, dtype=complex)
     phi[keep] = phi_red
 
     # Bond currents
-    bonds = lattice.bonds
-    I_bond = np.array(
-        [g[e] * (phi[i] - phi[j]) for e, (i, j) in enumerate(bonds)],
-        dtype=complex,
-    )
+    edge_drop = np.asarray(lattice.incidence.conjugate().transpose() @ phi).reshape(-1)
+    I_bond = np.asarray(g * edge_drop, dtype=complex)
 
     I_abs = np.abs(I_bond)
     peak = float(I_abs.max()) if I_abs.size > 0 else 1.0
     I_norm = I_abs / max(peak, 1e-12)
 
-    return phi, I_bond, I_norm, gmres_fail
+    return phi, I_bond, I_abs, I_norm, gmres_fail
 
 
 # ============================================================ #
@@ -293,13 +360,12 @@ def _egatl_step(
     alpha = _alpha_eff(S, eg)
     mu = _mu_eff(S, eg)
 
-    dg_re = alpha * I_abs - mu * g_re
-    g_re_new = np.clip(g_re + dt * dg_re, eg.g_min, eg.g_max)
-
-    # Budget constraint on total real conductance
-    total_re = float(g_re_new.sum())
-    if eg.budget_re > 0 and total_re > eg.budget_re:
-        g_re_new = np.maximum(g_re_new * (eg.budget_re / total_re), eg.g_min)
+    if mu > 1e-12:
+        decay = math.exp(-mu * dt)
+        g_re_tentative = g_re * decay + (alpha * I_abs / mu) * (1.0 - decay)
+    else:
+        g_re_tentative = g_re + dt * alpha * I_abs
+    g_re_new = _project_real_budget(g_re_tentative, eg)
 
     # Imaginary part: pi_a-gated Hall conductance
     phase_g = np.angle(g)
@@ -313,12 +379,24 @@ def _egatl_step(
     activity = float(np.mean(I_abs))
     # slip = fraction of bonds below threshold
     slip = float(np.mean(np.maximum(0.0, ent.Tij - I_abs)))
-    dS = -ent.gamma * (S - ent.S_eq) + ent.kappa_slip * slip * activity
-    S_new = max(1e-3, S + dt * dS)
+    entropy_drive = ent.kappa_slip * slip * activity
+    if ent.gamma > 1e-12:
+        decay_S = math.exp(-ent.gamma * dt)
+        S_target = ent.S_eq + entropy_drive / ent.gamma
+        S_new = decay_S * S + (1.0 - decay_S) * S_target
+    else:
+        S_new = S + dt * entropy_drive
+    S_new = max(1e-3, S_new)
 
     # Adaptive pi ruler
-    dpi = ruler.alpha_pi * S - ruler.mu_pi * (pi_a - ruler.pi0)
-    pi_a_new = float(np.clip(pi_a + dt * dpi, ruler.pi_min, ruler.pi_max))
+    if ruler.mu_pi > 1e-12:
+        decay_pi = math.exp(-ruler.mu_pi * dt)
+        pi_dev = pi_a - ruler.pi0
+        pi_dev_new = decay_pi * pi_dev + (ruler.alpha_pi * S / ruler.mu_pi) * (1.0 - decay_pi)
+        pi_candidate = ruler.pi0 + pi_dev_new
+    else:
+        pi_candidate = pi_a + dt * ruler.alpha_pi * S
+    pi_a_new = float(np.clip(pi_candidate, ruler.pi_min, ruler.pi_max))
 
     return g_new, S_new, pi_a_new
 
@@ -408,13 +486,16 @@ def run_recovery_protocol(
     Returns
     -------
     lattice : QWZLattice
-    out     : dict with arrays t, g, phi, I_norm, pi_a, S, gmres_fails
+    out     : dict with arrays t, g, phi, I_abs, I_norm, pi_a, S, gmres_fails
     """
     rng = np.random.default_rng(seed)
     lattice = build_qwz_lattice(nx, ny, mass)
 
-    K = int(math.ceil(T / dt)) + 1
-    t_arr = np.linspace(0.0, T, K)
+    base_steps = int(math.floor(T / dt))
+    t_arr = np.arange(base_steps + 1, dtype=float) * dt
+    if t_arr[-1] < T - 1e-12:
+        t_arr = np.concatenate([t_arr, np.array([float(T)], dtype=float)])
+    K = len(t_arr)
 
     # Initial conductances: real=1, small imaginary noise
     g = np.ones(lattice.n_bonds, dtype=complex)
@@ -427,16 +508,17 @@ def run_recovery_protocol(
 
     g_hist = np.zeros((K, lattice.n_bonds), dtype=complex)
     phi_hist = np.zeros((K, lattice.n_nodes), dtype=complex)
+    I_abs_hist = np.zeros((K, lattice.n_bonds), dtype=float)
     I_norm_hist = np.zeros((K, lattice.n_bonds), dtype=float)
     pi_a_hist = np.zeros(K, dtype=float)
     S_hist = np.zeros(K, dtype=float)
 
     damage_applied = False
-    damage_step = int(damage_time / dt)
+    prev_phi: Optional[np.ndarray] = None
 
-    for k in range(K):
+    for k, t_now in enumerate(t_arr):
         # Apply damage
-        if not damage_applied and k >= damage_step:
+        if not damage_applied and t_now >= damage_time:
             g = _apply_damage_event(
                 g,
                 lattice,
@@ -446,21 +528,26 @@ def run_recovery_protocol(
             )
             damage_applied = True
 
-        phi, I_bond, I_norm, gf = _solve_network(g, lattice)
+        phi, I_bond, I_abs, I_norm, gf = _solve_network(g, lattice, prev_phi=prev_phi)
         gmres_fails += gf
+        prev_phi = phi
 
         g_hist[k] = g
         phi_hist[k] = phi
+        I_abs_hist[k] = I_abs
         I_norm_hist[k] = I_norm
         pi_a_hist[k] = pi_a
         S_hist[k] = S
 
-        g, S, pi_a = _egatl_step(g, I_bond, S, pi_a, dt, eg, ent, ruler)
+        if k < K - 1:
+            dt_step = float(t_arr[k + 1] - t_now)
+            g, S, pi_a = _egatl_step(g, I_bond, S, pi_a, dt_step, eg, ent, ruler)
 
     out: Dict[str, Any] = {
         "t": t_arr,
         "g": g_hist,
         "phi": phi_hist,
+        "I_abs": I_abs_hist,
         "I_norm": I_norm_hist,
         "pi_a": pi_a_hist,
         "S": S_hist,
@@ -475,19 +562,21 @@ def run_recovery_protocol(
 
 def effective_transfer(phi: np.ndarray, source: int, sink: int) -> float:
     """Effective admittance Y = 1 / |phi_source - phi_sink|."""
-    delta = abs(float(np.real(phi[source])) - float(np.real(phi[sink])))
+    delta = abs(phi[source] - phi[sink])
     return 1.0 / max(delta, 1e-12)
 
 
-def boundary_current_fraction(I_norm: np.ndarray, bonds: List[Tuple[int, int]]) -> float:
-    """Not used by lattice path; signature kept for back-compat."""
-    return float(np.mean(I_norm)) if I_norm.size else 0.0
+def boundary_current_fraction(I_abs: np.ndarray, lattice: "QWZLattice") -> float:
+    """Fraction of raw current magnitude carried by boundary bonds."""
+    all_I = float(np.sum(I_abs))
+    bnd_I = float(np.sum(I_abs[lattice.boundary_bond_mask]))
+    return bnd_I / max(all_I, 1e-12)
 
 
-def top_edge_fraction(I_norm: np.ndarray, lattice: "QWZLattice") -> float:
-    top_I = I_norm[lattice.top_edge_bond_mask]
-    all_I = I_norm
-    return float(top_I.mean()) / max(float(all_I.mean()), 1e-12)
+def top_edge_fraction(I_abs: np.ndarray, lattice: "QWZLattice") -> float:
+    top_I = float(np.sum(I_abs[lattice.top_edge_bond_mask]))
+    all_I = float(np.sum(I_abs))
+    return top_I / max(all_I, 1e-12)
 
 
 def proxy_chern_series(g: np.ndarray, lattice: "QWZLattice") -> np.ndarray:
@@ -756,11 +845,11 @@ def summarize_recovery(
         for k in range(K)
     ])
     Bfrac = np.array([
-        float(np.mean(out["I_norm"][k]))
+        boundary_current_fraction(out["I_abs"][k], lattice)
         for k in range(K)
     ])
     Tfrac = np.array([
-        top_edge_fraction(out["I_norm"][k], lattice)
+        top_edge_fraction(out["I_abs"][k], lattice)
         for k in range(K)
     ])
     Sig_bnd = boundary_signature_series(out["g"], lattice, out["pi_a"])

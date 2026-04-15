@@ -272,11 +272,11 @@ def run_lattice(args):
         for k in range(K)
     ])
     Bfrac = np.array([
-        boundary_current_fraction(out["I_norm"][k], lattice.bonds)
+        boundary_current_fraction(out["I_abs"][k], lattice)
         for k in range(K)
     ])
     Tfrac = np.array([
-        top_edge_fraction(out["I_norm"][k], lattice) for k in range(K)
+        top_edge_fraction(out["I_abs"][k], lattice) for k in range(K)
     ])
     Sig_bnd = boundary_signature_series(out["g"], lattice, out["pi_a"])
     Sig_top = top_edge_signature_series(out["g"], lattice, out["pi_a"])

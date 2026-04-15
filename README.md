@@ -69,7 +69,7 @@ The Streamlit app includes two presets in the sidebar:
 - `Default`: the original baseline configuration.
 - `Balanced Recovery`: a tuned configuration using `mass=-2.5`, `alpha0=4.0`, `qzw_entropy_gain=0.0`, and `alpha_pi=0.08`.
 
-In a 20-seed sweep, `Balanced Recovery` held transfer recovery in the `0.9994-0.9995` range with zero Bott drift and zero GMRES failures.
+In a 20-seed sweep, `Balanced Recovery` held mean transfer recovery at about `1.0027` with zero Bott drift and zero GMRES failures.
 
 ## Key Metrics
 

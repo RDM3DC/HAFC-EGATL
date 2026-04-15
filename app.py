@@ -553,7 +553,7 @@ def _build_run_report(
             "sink_cell": int(lattice.sink_cell),
         },
         "numerics": {
-            "integrator": "explicit_euler",
+            "integrator": "frozen_current_exponential",
             "topology_stride": int(topo_data["stride"]),
             "gmres_fails": int(summary["gmres_fails"]),
         },
